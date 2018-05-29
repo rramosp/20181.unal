@@ -2,7 +2,6 @@ from sklearn import datasets
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.cm as cm
-from rlx.utils import pbar
 import sys
 from sklearn.neighbors import KNeighborsClassifier
 from scipy.stats import multivariate_normal
@@ -127,160 +126,6 @@ class Example_Bayes2DClassifier():
         tpr = np.sum(p1*gx)/np.sum(p1)
         return (self.w0*tnr+self.w1*tpr)/(self.w0+self.w1)  
 
-def plot_estimator_border(bayes_classifier, estimators, n_samples=500):
-    try:
-        nns = [10,50,100]
-        pbar = pbar()(total=len(estimators), ascii=False, file=sys.stdout, ncols=100)
-        X,y = bayes_classifier.sample(n_samples)
-        plt.figure(figsize=(15,3))
-        for i,k in enumerate(sorted(estimators.keys())):
-            estimator = estimators[k]
-            pbar.update()
-            plt.subplot(1,len(estimators),i+1)
-            estimator.fit(X,y)
-            plot_2Ddata_with_boundary(estimator.predict, X, y, line_width=2, dots_alpha=.3, label="estimator boundary")
-            plot_2D_boundary(bayes_classifier.predict, np.min(X, axis=0), np.max(X, axis=0), 
-                             line_width=4, line_alpha=.7, line_color="green", label="bayes boundary")
-            plt.title(k+", estimator=%.3f"%estimator.score(X,y)+ "\nanalytic=%.3f"%bayes_classifier.analytic_score())
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        pbar.close()
-    except BaseException as e:
-        pbar.close()
-        raise e
-
-def sample_borders(mc, estimator, samples, n_reps):
-    try:
-        pbar = pbar(max_value=len(samples)*n_reps)
-        plt.figure(figsize=(15,3))
-        for i,n_samples in enumerate(samples):
-            plt.subplot(1,len(samples),i+1)
-            for ii in range(n_reps):
-                pbar.update()
-                X,y = mc.sample(n_samples)
-                estimator.fit(X,y)
-                if ii==0:
-                    plot_2D_boundary(estimator.predict, np.min(X, axis=0), np.max(X, axis=0), 
-                                     line_width=1, line_alpha=.5, label="estimator boundaries")
-                else:
-                    plot_2D_boundary(estimator.predict, np.min(X, axis=0), np.max(X, axis=0), 
-                                     line_width=1, line_alpha=.5)                    
-                plt.title("n samples="+str(n_samples))
-            plot_2D_boundary(mc.predict, np.min(X, axis=0), np.max(X, axis=0), 
-                             line_width=5, line_alpha=1., line_color="green", label="bayes boundary")
-        pbar.close()
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-    except BaseException as e:
-        pbar.close()
-        raise e
-
-from sklearn.neighbors import KernelDensity
-
-class KDClassifier:
-    
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        
-    def fit(self, X,y):
-        """
-        builds a kernel density estimator for each class
-        """
-        self.kdes = {}
-        for c in np.unique(y):
-            self.kdes[c] = KernelDensity(**self.kwargs)
-            self.kdes[c].fit(X[y==c])
-        return self
-        
-    def predict(self, X):
-        """
-        predicts the class with highest kernel density probability
-        """
-        classes = self.kdes.keys()
-        preds = []
-        for i in sorted(classes):
-            preds.append(self.kdes[i].score_samples(X))
-        preds = np.array(preds).T
-        preds = preds.argmax(axis=1)
-        preds = np.array([classes[i] for i in preds]) 
-        return preds
-    
-    def score(self, X, y):
-    
-        return np.mean(y==self.predict(X))
-    
-    
-def accuracy(y,preds):
-    return np.mean(y==preds)
-
-    
-from sklearn.cross_validation import train_test_split
-def bootstrapcv(estimator, X,y, test_size, n_reps, score_func=None, score_funcs=None):
-
-    if score_funcs is None and score_func is None:
-        raise ValueError("must set score_func or score_funcs")
-    
-    if score_funcs is not None and score_func is not None:
-        raise ValueError("cannot set both score_func and score_funcs")
-    
-    if score_func is not None:
-        rtr, rts = [],[]
-    else:
-        rtr = {i.__name__:[] for i in score_funcs}
-        rts = {i.__name__:[] for i in score_funcs}
-        
-    for i in range(n_reps):
-        Xtr, Xts, ytr, yts = train_test_split(X,y,test_size=test_size)
-        estimator.fit(Xtr, ytr)
-        if score_func is not None:
-            rts.append(score_func(yts, estimator.predict(Xts)))
-            rtr.append(score_func(ytr, estimator.predict(Xtr)))
-        else:
-            for f in score_funcs:
-                fname =  f.__name__
-                rts[fname].append(f(yts, estimator.predict(Xts)))
-                rtr[fname].append(f(ytr, estimator.predict(Xtr)))
-    if score_func is not None:
-        return np.array(rtr), np.array(rts)
-    else:
-        rtr = {i: np.array(rtr[i]) for i in rtr.keys()}
-        rts = {i: np.array(rts[i]) for i in rts.keys()}
-        return rtr, rts
-
-def lcurve(estimator, X,y, n_reps, score_func, show_progress=False):
-    test_sizes = np.linspace(.9,.1,9)
-    trmeans, trstds, tsmeans, tsstds = [], [], [], []
-    if show_progress:
-        pbar = pbar(max_value=len(test_sizes))
-    try:
-        for test_size in test_sizes:
-            rtr, rts = bootstrapcv(estimator,X,y,test_size,n_reps, score_func)
-            trmeans.append(np.mean(rtr))
-            trstds.append(np.std(rtr))
-            tsmeans.append(np.mean(rts))
-            tsstds.append(np.std(rts))
-            if show_progress:
-                pbar.update(1)
-    except (Exception, KeyboardInterrupt) as e:
-        if show_progress:
-            pbar.close()
-        raise e       
-    trmeans = np.array(trmeans)
-    trstds  = np.array(trstds)
-    tsmeans = np.array(tsmeans)
-    trstds  = np.array(tsstds)
-    abs_train_sizes = len(X)*(1-test_sizes)
-    plt.plot(abs_train_sizes, trmeans, marker="o", color="red", label="train")
-    plt.fill_between(abs_train_sizes, trmeans-trstds, trmeans+trstds, color="red", alpha=.2)
-    plt.plot(abs_train_sizes, tsmeans, marker="o", color="green", label="test")
-    plt.fill_between(abs_train_sizes, tsmeans-tsstds, tsmeans+tsstds, color="green", alpha=.2)
-    plt.xlim(len(X)*.05, len(X)*.95)
-    plt.xticks(abs_train_sizes)
-    plt.grid()
-    plt.xlabel("train size")
-    plt.ylabel(score_func.__name__)
-    plt.ylim(0,1)
-    plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.25),
-              ncol=2, fancybox=True, shadow=True)
-
 def plot_cluster_predictions(clustering, X, n_clusters = None, cmap = plt.cm.plasma,
                              plot_data=True, plot_centers=True, show_metric=False,
                              title_str=""):
@@ -318,7 +163,7 @@ def plot_cluster_predictions(clustering, X, n_clusters = None, cmap = plt.cm.pla
 def experiment_number_of_clusters(X, clustering, show_metric=True,
                                   plot_data=True, plot_centers=True, plot_boundaries=False):
     plt.figure(figsize=(15,6))
-    for n_clusters in pbar()(range(2,10)):
+    for n_clusters in range(2,10):
         clustering.n_clusters = n_clusters
         y = clustering.fit_predict(X)
 
@@ -332,7 +177,7 @@ def experiment_number_of_clusters(X, clustering, show_metric=True,
 def experiment_KMeans_number_of_iterations(X, n_clusters=3,
                                     plot_data=True, plot_centers=True, plot_boundaries=False):
     plt.figure(figsize=(15,6))
-    for i in pbar()(range(10)):
+    for i in range(10):
         init_centroids = np.vstack((np.linspace(np.min(X[:,0]), np.max(X[:,0])/20, n_clusters), 
                                     [np.min(X[:,1])]*n_clusters)).T
 
@@ -367,3 +212,7 @@ def experiment_KMeans_number_of_iterations(X, n_clusters=3,
             plot_cluster_predictions(km, X, n_clusters, cm, plot_data, plot_centers, plot_boundaries)
 
             plt.title("n_iters %d"%(n_iterations))
+
+
+
+
